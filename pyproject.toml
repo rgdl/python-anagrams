@@ -6,6 +6,7 @@ authors = ["rgdl <robert_delisle44@hotmail.com>"]
 
 [tool.poetry.dependencies]
 python = "^3.8"
+nltk = "^3.6.2"
 
 [tool.poetry.dev-dependencies]
 pytest = "^5.2"
