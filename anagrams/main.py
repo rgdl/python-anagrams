@@ -55,10 +55,10 @@ def build_word_lookup(min_word_length=4):
     Pre-calculate a lookup containing the letter counts in each word.
     e.g. For "that", we want {'t': 2, 'a': 1, 'h': 1}
     """
-    
+
     if WORD_LOOKUP_PATH.exists():
         return pd.read_pickle(WORD_LOOKUP_PATH)
-    
+
     words = get_words()
 
     import nltk
@@ -92,7 +92,7 @@ def build_word_lookup(min_word_length=4):
     df.to_pickle(WORD_LOOKUP_PATH)
 
     return df
-    
+
 
 def find_anagrams(
     text: str,

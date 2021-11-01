@@ -8,3 +8,8 @@ echo "text to be scrambled" | python anagrams/main.py
 
 python anagrams/main.py "text to be scrambled"
 ```
+
+To run linter:
+```sh
+flake8 .
+```
