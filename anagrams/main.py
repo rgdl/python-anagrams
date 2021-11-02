@@ -14,6 +14,7 @@ python anagrams/main.py "text to be scrambled"
 """
 
 from collections import Counter
+from collections import deque
 from pathlib import Path
 import sys
 from typing import Optional
@@ -105,61 +106,53 @@ def find_anagrams(
         a column for every character in the corpus. Each value gives the
         number of times a given character occurs in a given word.
     `stream_results`: if True, print anagrams to stdin as they're found
+
+    Main anagram algorithm:
+    1. find all words that are contained in `text_letters`
+    2. if none found, stop and append any `current_results` to `all_results`
+    3. for each word found (if any), branch into a new function call,
+        where the letters of the word are stripped from `text_letters`
+        and `current_result` contains the word. Go from step 1 again
     """
     # A count of the characters in the input text
-    text_letters = pd.Series(
-        Counter(char for char in text if char in words.columns),
+    full_text_letters = pd.Series(
+        Counter(char for char in text if char in words),
         index=words.columns
     ).fillna(0).astype(int)
 
-    def _inner(
-        text_letters: str,
-        words: pd.DataFrame,
-        all_results: set,
-        current_result: Optional[tuple] = None,
-    ):
-        # TODO: is there an iterative implementation of this? Would that be more performant? Which would lend itself better to multiprocessing?
-        """
-        Main anagram algorithm:
-        1. find all words that are contained in `text_letters`
-        2. if none found, stop and append any `current_results` to `all_results`
-        3. for each word found (if any), branch into a new function call,
-            where the letters of the word are stripped from `text_letters`
-            and `current_result` contains the word. Go from step 1 again
-        """
-
-        if current_result is None:
-            current_result = tuple()
-
-        contained_words = (text_letters - words).min(axis=1) >= 0
+    all_results = set()
+    stack = deque([{'text_letters': full_text_letters, 'words': words, 'current_result': tuple()}])
+    # TODO: can I multi-thread this algorithm? Part of it may need to become a function again
+    # TODO: time the parts of this loop and find what's taking longest
+    while stack:
+        data = stack.pop()
+        contained_words = (data['text_letters'] >= data['words']).all(axis=1)
 
         if not contained_words.any():
-            has_remainder = all(text_letters == 0)
-            # TODO: checking if it's already in the results may be slow. Can I avoid this ever happening in the first place?
-            if has_remainder or not current_result or current_result in all_results:
-                return
+            if not data['current_result']:
+                continue
+            if any(data['text_letters'] != 0):
+                continue
             if stream_results:
-                print(current_result)
-            all_results.add(current_result)
-            return
+                print(data['current_result'])
+            all_results.add(data['current_result'])
+            continue
 
         # Since we're stripping out letters as we go, we can drop any words
         # that didn't match this time through
-        words = words.loc[contained_words]
+        words = data['words'].loc[contained_words]
 
         for word, letters in words.iterrows():
-            _inner(
-                text_letters - letters,
-                words,
-                all_results,
-                tuple(sorted((*current_result, word))),
-            )
+            current_result = tuple(sorted((*data['current_result'], word)))
+            # TODO: checking if it's already in the results may be slow, and maybe also the sorting. Can I avoid this ever happening in the first place?
+            if current_result in all_results:
+                continue
 
-    all_results = set()
-
-    # Recursively build anagrams from the input text's characters
-    # Append these to `all_results`
-    _inner(text_letters, words, all_results)
+            stack.append({
+                'text_letters': data['text_letters'] - letters,
+                'words': words,
+                'current_result': current_result,
+            })
 
     return all_results
 
@@ -171,8 +164,15 @@ if __name__ == '__main__':
         print(__doc__)
         sys.exit(0)
 
+    stream_results = True
+
     if text:
-        find_anagrams(text)
+        results = find_anagrams(text, stream_results=stream_results)
     else:
+        results = []
         for line in sys.stdin:
-            find_anagrams(line)
+            results.append(find_anagrams(line, stream_results=stream_results))
+        results = '\n\n'.join(results)
+
+    if not stream_results:
+        print(results)

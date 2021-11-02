@@ -13,3 +13,8 @@ To run linter:
 ```sh
 flake8 .
 ```
+
+To run tests:
+```sh
+pytest tests
+```
