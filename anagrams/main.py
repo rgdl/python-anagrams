@@ -19,6 +19,7 @@ from pathlib import Path
 import sys
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 
 WORD_LOOKUP_PATH = Path('WORD_LOOKUP.pickle')
@@ -97,12 +98,12 @@ def build_word_lookup(min_word_length=4):
 
 def find_anagrams(
     text: str,
-    words: pd.DataFrame = build_word_lookup(),
+    all_words: pd.DataFrame = build_word_lookup(),
     stream_results: bool = True,
 ):
     """
     `text`: the text to be scrambled into anagrams
-    `words`: a DataFrame with a row for every word in the corpus and
+    `all_words`: a DataFrame with a row for every word in the corpus and
         a column for every character in the corpus. Each value gives the
         number of times a given character occurs in a given word.
     `stream_results`: if True, print anagrams to stdin as they're found
@@ -116,44 +117,82 @@ def find_anagrams(
     """
     # A count of the characters in the input text
     full_text_letters = pd.Series(
-        Counter(char for char in text if char in words),
-        index=words.columns
-    ).fillna(0).astype(int)
+        Counter(char for char in text if char in all_words),
+        index=all_words.columns
+    ).fillna(0).astype(int).values
 
     all_results = set()
-    stack = deque([{'text_letters': full_text_letters, 'words': words, 'current_result': tuple()}])
+
+    stack = deque([{
+        'text_letters': full_text_letters,
+        'words': all_words.index.values,
+        'word_letters': all_words.values,
+        'current_result': tuple(),
+    }])
     # TODO: can I multi-thread this algorithm? Part of it may need to become a function again
     # TODO: time the parts of this loop and find what's taking longest
-    while stack:
-        data = stack.pop()
-        contained_words = (data['text_letters'] >= data['words']).all(axis=1)
+    from time import time
+    from collections import defaultdict
+    times = defaultdict(lambda: [])
+    try:
+        while stack:
+            t0 = time()
+            data = stack.pop()
+            # TODO: given that I'm flattening out the results of this, is there a quicker way? Can I check it one column at a time, or in chunks?
+            contained_words = (data['text_letters'] >= data['word_letters']).all(axis=1)
+            import pdb; pdb.set_trace()
+            times['a'].append(time() - t0); t0 = time()
 
-        if not contained_words.any():
-            if not data['current_result']:
+            if not contained_words.any():
+                if not data['current_result']:
+                    continue
+                if any(data['text_letters'] != 0):
+                    continue
+                if stream_results:
+                    print(data['current_result'])
+                all_results.add(data['current_result'])
                 continue
-            if any(data['text_letters'] != 0):
-                continue
-            if stream_results:
-                print(data['current_result'])
-            all_results.add(data['current_result'])
-            continue
+            times['b'].append(time() - t0); t0 = time()
 
-        # Since we're stripping out letters as we go, we can drop any words
-        # that didn't match this time through
-        words = data['words'].loc[contained_words]
+            # Since we're stripping out letters as we go, we can drop any words
+            # that didn't match this time through
+            words = data['words'][contained_words]
+            word_letters = data['word_letters'][contained_words]
+            times['c'].append(time() - t0); t0 = time()
 
-        for word, letters in words.iterrows():
-            current_result = tuple(sorted((*data['current_result'], word)))
-            # TODO: checking if it's already in the results may be slow, and maybe also the sorting. Can I avoid this ever happening in the first place?
-            if current_result in all_results:
-                continue
+            for i in reversed(range(len(words))):
+                t1 = time()
+                current_result = tuple([*data['current_result'], words[i]])
+                times['AA'].append(time() - t1); t1 = time()
 
-            stack.append({
-                'text_letters': data['text_letters'] - letters,
-                'words': words,
-                'current_result': current_result,
-            })
+                new_text_letters = data['text_letters'] - word_letters[i]
+                times['AB'].append(time() - t1); t1 = time()
+                stack.append({
+                    'text_letters': new_text_letters,
+                    'words': words,
+                    'word_letters': word_letters,
+                    'current_result': current_result,
+                })
+                times['BB'].append(time() - t1); t1 = time()
 
+                # Can I instead build up a mask and put it on the stack each time?
+                word_mask = np.ones_like(words).astype(bool)
+                word_mask[i] = False
+                times['BC'].append(time() - t1); t1 = time()
+                words = words[word_mask]
+                times['CC'].append(time() - t1); t1 = time()
+                word_letters = word_letters[word_mask]
+                times['DD'].append(time() - t1); t1 = time()
+
+            times['d'].append(time() - t0); t0 = time()
+    except Exception as e:
+        print('error:', e)
+    finally:
+        time_summary = pd.DataFrame({
+            k: pd.Series(v).describe() for k, v in times.items()
+        })
+        time_summary.loc['total'] = time_summary.loc['count'] * time_summary.loc['mean']
+        print(time_summary)
     return all_results
 
 
