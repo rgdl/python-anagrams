@@ -16,6 +16,7 @@ python anagrams/main.py "text to be scrambled"
 from collections import Counter
 from collections import deque
 from pathlib import Path
+import string
 import sys
 from typing import Optional
 
@@ -23,6 +24,7 @@ import numpy as np
 import pandas as pd
 
 WORD_LOOKUP_PATH = Path('WORD_LOOKUP.pickle')
+CHARACTERS_OF_INTEREST = {*string.ascii_lowercase}
 
 
 def get_words():
@@ -52,7 +54,7 @@ def _examine_min_norm_freq_threshold(norm_freqs, threshold):
     }
 
 
-def build_word_lookup(min_word_length=4):
+def build_word_lookup(min_word_length: int = 4, characters: set = CHARACTERS_OF_INTEREST):
     """
     Pre-calculate a lookup containing the letter counts in each word.
     e.g. For "that", we want {'t': 2, 'a': 1, 'h': 1}
@@ -90,7 +92,20 @@ def build_word_lookup(min_word_length=4):
         .reset_index(drop=True)
     )
 
-    df = df.drop('length', axis=1).set_index('word')
+    # Filter
+    character_cols_to_drop = [c for c in df if c not in {*characters, 'length', 'word'}]
+    rows_to_drop = df[character_cols_to_drop].any(axis=1).loc[lambda x: x].index
+    df = (
+        df
+        .drop([*character_cols_to_drop, 'length'], axis=1)
+        .drop(rows_to_drop, axis=0)
+        .set_index('word')
+    )
+
+    # Sort with rarest letters first
+    df = df[df.sum(axis=0).sort_values(ascending=False).index]
+
+    assert set(df.columns) == characters
     df.to_pickle(WORD_LOOKUP_PATH)
 
     return df
@@ -130,7 +145,7 @@ def find_anagrams(
         'current_result': tuple(),
     }])
     # TODO: can I multi-thread this algorithm? Part of it may need to become a function again
-    # TODO: time the parts of this loop and find what's taking longest
+
     from time import time
     from collections import defaultdict
     times = defaultdict(lambda: [])
@@ -138,9 +153,7 @@ def find_anagrams(
         while stack:
             t0 = time()
             data = stack.pop()
-            # TODO: given that I'm flattening out the results of this, is there a quicker way? Can I check it one column at a time, or in chunks?
             contained_words = (data['text_letters'] >= data['word_letters']).all(axis=1)
-            import pdb; pdb.set_trace()
             times['a'].append(time() - t0); t0 = time()
 
             if not contained_words.any():
@@ -175,7 +188,7 @@ def find_anagrams(
                 })
                 times['BB'].append(time() - t1); t1 = time()
 
-                # Can I instead build up a mask and put it on the stack each time?
+                # TODO: Can I instead build up a mask and put it on the stack each time?
                 word_mask = np.ones_like(words).astype(bool)
                 word_mask[i] = False
                 times['BC'].append(time() - t1); t1 = time()
