@@ -4,13 +4,7 @@
 # Anagram Finder
 Find all anagrams for text in standard input or command line argument
 
-```bash
-echo "text to be scrambled" | python anagrams/main.py
-
-# Or
-
-python anagrams/main.py "text to be scrambled"
-```
+poetry run python anagrams/main.py "text to be scrambled"
 """
 
 from collections import Counter
@@ -18,7 +12,6 @@ from collections import deque
 from pathlib import Path
 import string
 import sys
-from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -83,8 +76,7 @@ def build_word_lookup(min_word_length: int = 4, characters: set = CHARACTERS_OF_
     ], axis=1).drop_duplicates()
     df['length'] = df.drop('word', axis=1).sum(axis=1)
     df = (
-        df
-        .loc[
+        df.loc[
             ((df['length'] > 1) | (df['word'].isin(['i', 'a'])))
             & (df['length'] >= min_word_length)
         ]
@@ -115,7 +107,7 @@ def find_anagrams(
     text: str,
     all_words: pd.DataFrame = build_word_lookup(),
     stream_results: bool = True,
-):
+) -> set:
     """
     `text`: the text to be scrambled into anagrams
     `all_words`: a DataFrame with a row for every word in the corpus and
@@ -144,73 +136,49 @@ def find_anagrams(
         'word_letters': all_words.values,
         'current_result': tuple(),
     }])
-    # TODO: can I multi-thread this algorithm? Part of it may need to become a function again
 
-    from time import time
-    from collections import defaultdict
-    times = defaultdict(lambda: [])
-    try:
-        while stack:
-            t0 = time()
-            data = stack.pop()
-            contained_words = (data['text_letters'] >= data['word_letters']).all(axis=1)
-            times['a'].append(time() - t0); t0 = time()
+    while stack:
+        data = stack.pop()
+        contained_words = (data['text_letters'] >= data['word_letters']).all(axis=1)
 
-            if not contained_words.any():
-                if not data['current_result']:
-                    continue
-                if any(data['text_letters'] != 0):
-                    continue
-                if stream_results:
-                    print(data['current_result'])
-                all_results.add(data['current_result'])
+        if not contained_words.any():
+            if not data['current_result']:
                 continue
-            times['b'].append(time() - t0); t0 = time()
+            if any(data['text_letters'] != 0):
+                continue
+            if stream_results:
+                print(data['current_result'])
+            all_results.add(data['current_result'])
+            continue
 
-            # Since we're stripping out letters as we go, we can drop any words
-            # that didn't match this time through
-            words = data['words'][contained_words]
-            word_letters = data['word_letters'][contained_words]
-            times['c'].append(time() - t0); t0 = time()
+        # Since we're stripping out letters as we go, we can drop any words
+        # that didn't match this time through
+        words = data['words'][contained_words]
+        word_letters = data['word_letters'][contained_words]
 
-            for i in reversed(range(len(words))):
-                t1 = time()
-                current_result = tuple([*data['current_result'], words[i]])
-                times['AA'].append(time() - t1); t1 = time()
+        for i in reversed(range(len(words))):
+            current_result = tuple([*data['current_result'], words[i]])
 
-                new_text_letters = data['text_letters'] - word_letters[i]
-                times['AB'].append(time() - t1); t1 = time()
-                stack.append({
-                    'text_letters': new_text_letters,
-                    'words': words,
-                    'word_letters': word_letters,
-                    'current_result': current_result,
-                })
-                times['BB'].append(time() - t1); t1 = time()
+            new_text_letters = data['text_letters'] - word_letters[i]
+            stack.append({
+                'text_letters': new_text_letters,
+                'words': words,
+                'word_letters': word_letters,
+                'current_result': current_result,
+            })
 
-                # TODO: Can I instead build up a mask and put it on the stack each time?
-                word_mask = np.ones_like(words).astype(bool)
-                word_mask[i] = False
-                times['BC'].append(time() - t1); t1 = time()
-                words = words[word_mask]
-                times['CC'].append(time() - t1); t1 = time()
-                word_letters = word_letters[word_mask]
-                times['DD'].append(time() - t1); t1 = time()
+            word_mask = np.ones_like(words).astype(bool)
+            word_mask[i] = False
+            words = words[word_mask]
+            word_letters = word_letters[word_mask]
 
-            times['d'].append(time() - t0); t0 = time()
-    except Exception as e:
-        print('error:', e)
-    finally:
-        time_summary = pd.DataFrame({
-            k: pd.Series(v).describe() for k, v in times.items()
-        })
-        time_summary.loc['total'] = time_summary.loc['count'] * time_summary.loc['mean']
-        print(time_summary)
     return all_results
 
 
 if __name__ == '__main__':
     text = ' '.join(sys.argv[1:])
+    if not text:
+        raise ValueError('some text must be provided')
 
     if text in ('help', '--help', '-h'):
         print(__doc__)
@@ -218,13 +186,9 @@ if __name__ == '__main__':
 
     stream_results = True
 
-    if text:
-        results = find_anagrams(text, stream_results=stream_results)
-    else:
-        results = []
-        for line in sys.stdin:
-            results.append(find_anagrams(line, stream_results=stream_results))
-        results = '\n\n'.join(results)
+    results = find_anagrams(text, stream_results=stream_results)
 
+    if not results:
+        print('No anagrams found', file=sys.stderr)
     if not stream_results:
         print(results)
